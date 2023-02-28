@@ -17,7 +17,6 @@ limitations under the License.
 package plugin
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -67,11 +66,16 @@ type BindOptions struct {
 	// Runner is runs the command. It can be replaced in tests.
 	Runner func(cmd *exec.Cmd) error
 
-	flags *pflag.FlagSet
+	flags   *pflag.FlagSet
+	outFile *os.File
 }
 
 // NewBindOptions returns new BindOptions.
 func NewBindOptions(streams genericclioptions.IOStreams) *BindOptions {
+	f, err := os.CreateTemp("", "*.yaml")
+	if err != nil {
+		panic(err)
+	}
 	opts := &BindOptions{
 		Options: base.NewOptions(streams),
 		Logs:    logs.NewOptions(),
@@ -80,6 +84,7 @@ func NewBindOptions(streams genericclioptions.IOStreams) *BindOptions {
 		Runner: func(cmd *exec.Cmd) error {
 			return cmd.Run()
 		},
+		outFile: f,
 	}
 
 	return opts
@@ -267,11 +272,17 @@ func (b *BindOptions) Run(ctx context.Context, urlCh chan<- string) error {
 			return err
 		}
 
+		f := b.outFile
+		_, err = f.Write(bs)
+		if err != nil {
+			return err
+		}
+
 		args := []string{
 			"apiservice",
 			"--remote-kubeconfig-namespace", secret.Namespace,
 			"--remote-kubeconfig-name", secret.Name,
-			"-f", "-",
+			"-f", f.Name(),
 		}
 		b.flags.VisitAll(func(flag *pflag.Flag) {
 			if flag.Changed && PassOnFlags.Has(flag.Name) {
@@ -284,7 +295,7 @@ func (b *BindOptions) Run(ctx context.Context, urlCh chan<- string) error {
 		fmt.Fprintf(b.Options.ErrOut, "🚀 Executing: %s %s\n", "kubectl bind", strings.Join(args, " ")) // nolint: errcheck
 		fmt.Fprintf(b.Options.ErrOut, "✨ Use \"-o yaml\" and \"--dry-run\" to get the APIServiceExportRequest.\n   and pass it to \"kubectl bind apiservice\" directly. Great for automation.\n")
 		command := exec.CommandContext(ctx, executable, append(args, "--no-banner")...)
-		command.Stdin = bytes.NewReader(bs)
+		command.Stdin = b.Options.IOStreams.In
 		command.Stdout = b.Options.Out
 		command.Stderr = b.Options.ErrOut
 		if err := b.Runner(command); err != nil {
@@ -293,6 +304,10 @@ func (b *BindOptions) Run(ctx context.Context, urlCh chan<- string) error {
 	}
 
 	return nil
+}
+
+func (opts *BindOptions) Cleanup() {
+	os.Remove(opts.outFile.Name())
 }
 
 func ClusterID(ns *corev1.Namespace) string {
