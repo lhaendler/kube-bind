@@ -18,6 +18,7 @@ package plugin
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -141,11 +142,104 @@ func (b *BindAPIServiceOptions) createAPIServiceBindings(ctx context.Context, co
 
 func (opt BindAPIServiceOptions) promptYesNo(p kubebindv1alpha1.PermissionClaim) (bool, error) {
 
-	fmt.Printf("%+v", opt.Options.IOStreams)
 	reader := bufio.NewReader(opt.Options.IOStreams.In)
-
 	for {
-		fmt.Fprintf(opt.Options.IOStreams.Out, "binding wants permission\n%+v\n[Y/N]", p)
+		var b bytes.Buffer
+
+		var groupResource string
+		if p.GroupResource.Group != "" {
+			groupResource = fmt.Sprintf("%s objects (apiVersion: \"%s/%s\")", p.GroupResource.Resource, p.GroupResource.Group, p.Version)
+		} else {
+			groupResource = fmt.Sprintf("%s objects (apiVersion: \"%s\")", p.GroupResource.Resource, p.Version)
+		}
+		if p.Selector.Owner == kubebindv1alpha1.Provider {
+			if p.Selector.Name != "" {
+				if p.Create.Donate {
+					fmt.Fprintf(&b, "Create and modify the following user-owned %s on your cluster referenced with:\n	name: \"%s\"\n", groupResource, p.Selector.Name)
+				} else {
+					fmt.Fprintf(&b, "Create and modify the following provider owned %s on your cluster referenced with:\n	name: \"%s\"\n", groupResource, p.Selector.Name)
+				}
+			} else {
+				if p.Create.Donate {
+					fmt.Fprintf(&b, "Create and modify user-owned %s on your cluster.\n", groupResource)
+				} else {
+					fmt.Fprintf(&b, "Create and modify provider owned %s on your cluster.\n", groupResource)
+				}
+
+			}
+			if p.OnConflict != nil {
+				switch {
+				case p.OnConflict.ProviderOverwrites && p.OnConflict.RecreateWhenConsumerSideDeleted:
+					b.WriteString("Conflicting objects will be overwritten and created objects will be recreated upon deletion.\n")
+				case p.OnConflict.ProviderOverwrites:
+					b.WriteString("Conflicting objects will be overwritten and created objects will not be recreated upon deletion.\n")
+				case p.OnConflict.RecreateWhenConsumerSideDeleted:
+					b.WriteString("Conflicting objects will not be overwritten and created objects will be recreated upon deletion.\n")
+				default: //Do nothing
+				}
+			}
+			if p.Update != nil {
+				if p.Update.Fields != nil {
+					b.WriteString("The following fields of the objects will still be managed by the provider:\n")
+					for _, s := range p.Update.Fields {
+						fmt.Fprintf(&b, "	\"%s\"\n", s)
+					}
+				}
+				if p.Update.Preserving != nil {
+					b.WriteString("The following fields of the objects will still be managed by the user:\n")
+					for _, s := range p.Update.Preserving {
+						fmt.Fprintf(&b, "	\"%s\"\n", s)
+					}
+				}
+				if p.Update.AlwaysRecreate {
+					b.WriteString("Modification of said objects will by handled by deletion and recreation of said objects.\n")
+				}
+			}
+		}
+		if p.Selector.Owner == kubebindv1alpha1.Consumer {
+			if p.Selector.Name != "" {
+				if p.Adopt {
+					fmt.Fprintf(&b, "The provider wants to become owner of the following user-created %s referenced with:\n	name: \"%s\"\n", groupResource, p.Selector.Name)
+					b.WriteString("The provider will be able to access, modify and delete said objects on your cluster.\n")
+				} else {
+					fmt.Fprintf(&b, "The provider wants read access to the following user-created %s referenced with:\n	name: \"%s\"\n", groupResource, p.Selector.Name)
+					b.WriteString("The provider will not be able to modify or delete said objects.\n")
+				}
+			} else {
+				if p.Adopt {
+					fmt.Fprintf(&b, "The provider wants to become owner of all user-created %s.\n", groupResource)
+					b.WriteString("The provider will be able to access, modify and delete said objects on your cluster.\n")
+				} else {
+					fmt.Fprintf(&b, "The provider wants read access to all user-created %s.\n", groupResource)
+					b.WriteString("The provider will not be able to modify or delete said objects.\n")
+				}
+			}
+
+			if p.Update != nil {
+				if (!p.Adopt && p.Update.Fields != nil) || (p.Adopt && p.Update.Preserving != nil) {
+					b.WriteString("The following fields of the objects will still be managed by the user:\n")
+				}
+				if (!p.Adopt && p.Update.Preserving != nil) || (p.Adopt && p.Update.Fields != nil) {
+					b.WriteString("The following fields of the objects will still be managed by the provider:\n")
+				}
+				for _, s := range append(p.Update.Fields, p.Update.Preserving...) {
+					fmt.Fprintf(&b, "	\"%s\"\n", s)
+				}
+				if p.Update.AlwaysRecreate {
+					b.WriteString("Modification of said objects will by handled by deletion and recreation of said objects.\n")
+				}
+			}
+		}
+
+		// Output the prior built string
+		fmt.Fprint(opt.Options.IOStreams.Out, b.String())
+
+		if p.Required {
+			fmt.Fprint(opt.Options.IOStreams.Out, "Accepting this Permission is required in order to proceed.\n")
+		} else {
+			fmt.Fprint(opt.Options.IOStreams.Out, "Accepting this Permission is optional.\n")
+		}
+		fmt.Fprint(opt.Options.IOStreams.Out, "Do you accept this Permission? [No,Yes]\n")
 
 		response, err := reader.ReadString('\n')
 		if err != nil {
