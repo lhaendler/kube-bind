@@ -34,84 +34,702 @@ func TestHumanReadablePromt(t *testing.T) {
 		testData       kubebindv1alpha1.PermissionClaim
 		expectedOutput string
 	}{
-		{"Test Provider, Required, Create.Donate, OnConflict.ProviderOverwrittes, ", //TODO
+		{"Owner=Provider",
 			kubebindv1alpha1.PermissionClaim{
 				GroupResource: kubebindv1alpha1.GroupResource{
 					Group:    "",
-					Resource: "secret",
+					Resource: "foo",
 				},
 				Version: "v1",
 				Selector: kubebindv1alpha1.ResourceSelector{
-					Name:  "mangodb-secret",
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,Required=false",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: false,
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is optional.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,Selector.Name",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Name:  "bar",
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+			},
+			"Create and modify the following provider owned foo objects (apiVersion: \"v1\") on your cluster referenced with:\n" +
+				"	name: \"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,GroupResource.Group",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "bar",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"bar/v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,Selector.Name,GroupResource.Group",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "bar",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Name:  "bar",
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+			},
+			"Create and modify the following provider owned foo objects (apiVersion: \"bar/v1\") on your cluster referenced with:\n" +
+				"	name: \"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,CreateOptions={}",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				Create:   &kubebindv1alpha1.CreateOptions{},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,CreateOptions=false",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				Create: &kubebindv1alpha1.CreateOptions{
+					Donate: false,
+				},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,CreateOption.Donate=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
 					Owner: kubebindv1alpha1.Provider,
 				},
 				Required: true,
 				Create: &kubebindv1alpha1.CreateOptions{
 					Donate: true,
 				},
-				OnConflict: &kubebindv1alpha1.OnConflictOptions{
-					ProviderOverwrites:              true,
-					RecreateWhenConsumerSideDeleted: true,
-				},
-				Update: &kubebindv1alpha1.UpdateOptions{
-					Fields: []string{"stringData.credentials", "stringData.config"},
-				},
 			},
-			"Create and modify the following user-owned secret objects (apiVersion: \"v1\") on your cluster referenced with:\n" +
-				"	name: \"mangodb-secret\"\n" +
-				"Conflicting objects will be overwritten and created objects will be recreated upon deletion.\n" +
-				"The following fields of the objects will still be managed by the provider:\n" +
-				"	\"stringData.credentials\"\n" +
-				"	\"stringData.config\"\n" +
+			"Create and modify user-owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
 				"Accepting this Permission is required in order to proceed.\n" +
 				"Do you accept this Permission? [No,Yes]\n",
 		},
-		{"Test 1",
+		{"Owner=Provider,OnConflict={}",
 			kubebindv1alpha1.PermissionClaim{
 				GroupResource: kubebindv1alpha1.GroupResource{
-					Group:    "mangodb",
-					Resource: "customConfig",
+					Group:    "",
+					Resource: "foo",
 				},
-				Version: "v1alpha1",
+				Version: "v1",
 				Selector: kubebindv1alpha1.ResourceSelector{
-					Name:  "mangodb-CC",
-					Owner: kubebindv1alpha1.Consumer,
+					Owner: kubebindv1alpha1.Provider,
 				},
-				Required: false,
-				Adopt:    true,
+				Required:   true,
+				OnConflict: &kubebindv1alpha1.OnConflictOptions{},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,OnConflict.ProviderOverwrites=false",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
 				OnConflict: &kubebindv1alpha1.OnConflictOptions{
-					ProviderOverwrites:              false,
+					ProviderOverwrites: false,
+				},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,OnConflict.ProviderOverwrites=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				OnConflict: &kubebindv1alpha1.OnConflictOptions{
+					ProviderOverwrites: true,
+				},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Conflicting objects will be overwritten and created objects will not be recreated upon deletion.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,OnConflict.RecreateWhenConsumerSideDeleted=false",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				OnConflict: &kubebindv1alpha1.OnConflictOptions{
 					RecreateWhenConsumerSideDeleted: false,
 				},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,OnConflict.RecreateWhenConsumerSideDeleted=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				OnConflict: &kubebindv1alpha1.OnConflictOptions{
+					RecreateWhenConsumerSideDeleted: true,
+				},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Conflicting objects will not be overwritten and created objects will be recreated upon deletion.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,UpdateOptions={}",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				Update:   &kubebindv1alpha1.UpdateOptions{},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,UpdateOptions.Fields",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
 				Update: &kubebindv1alpha1.UpdateOptions{
-					Preserving:     []string{"config.ID", "spec.data.dashboardToken"},
+					Fields: []string{"foo", "bar"},
+				},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"The following fields of the objects will still be managed by the provider:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,UpdateOptions.Preserving",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				Update: &kubebindv1alpha1.UpdateOptions{
+					Preserving: []string{"foo", "bar"},
+				},
+			},
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"The following fields of the objects will still be managed by the user:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,UpdateOptions.AlwaysRecreate=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				Update: &kubebindv1alpha1.UpdateOptions{
 					AlwaysRecreate: true,
 				},
 			},
-			"The provider wants to become owner of the following user-created customConfig objects (apiVersion: \"mangodb/v1alpha1\") referenced with:\n" +
-				"	name: \"mangodb-CC\"\n" +
-				"The provider will be able to access, modify and delete said objects on your cluster.\n" +
-				"The following fields of the objects will still be managed by the user:\n" +
-				"	\"config.ID\"\n" +
-				"	\"spec.data.dashboardToken\"\n" +
+			"Create and modify provider owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
 				"Modification of said objects will by handled by deletion and recreation of said objects.\n" +
-				"Accepting this Permission is optional.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
 				"Do you accept this Permission? [No,Yes]\n",
 		},
-		{"Test 2",
+		{"Owner=Provider,UpdateOptions.Fields,CreateOptions.Donate=true",
 			kubebindv1alpha1.PermissionClaim{
 				GroupResource: kubebindv1alpha1.GroupResource{
-					Group:    "mangodb",
-					Resource: "customConfig",
+					Group:    "",
+					Resource: "foo",
 				},
-				Version: "v1alpha1",
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				Create: &kubebindv1alpha1.CreateOptions{
+					Donate: true,
+				},
+				Update: &kubebindv1alpha1.UpdateOptions{
+					Fields: []string{"foo", "bar"},
+				},
+			},
+			"Create and modify user-owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"The following fields of the objects will still be managed by the user:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Provider,UpdateOptions.Preserving,CreateOptions.Donate=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Provider,
+				},
+				Required: true,
+				Create: &kubebindv1alpha1.CreateOptions{
+					Donate: true,
+				},
+				Update: &kubebindv1alpha1.UpdateOptions{
+					Preserving: []string{"foo", "bar"},
+				},
+			},
+			"Create and modify user-owned foo objects (apiVersion: \"v1\") on your cluster.\n" +
+				"The following fields of the objects will still be managed by the provider:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
 				Selector: kubebindv1alpha1.ResourceSelector{
 					Owner: kubebindv1alpha1.Consumer,
 				},
 				Required: true,
-				Adopt:    false,
 			},
-			"The provider wants read access to all user-created customConfig objects (apiVersion: \"mangodb/v1alpha1\").\n" +
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,Selector.Name",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Name:  "bar",
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+			},
+			"The provider wants read access to the following user-created foo objects (apiVersion: \"v1\") referenced with:\n" +
+				"	name: \"bar\"\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,GroupResource.Group",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "bar",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"bar/v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,Selector.Name,GroupResource.Group",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "bar",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Name:  "bar",
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+			},
+			"The provider wants read access to the following user-created foo objects (apiVersion: \"bar/v1\") referenced with:\n" +
+				"	name: \"bar\"\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,Adopt=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Adopt:    true,
+				Required: true,
+			},
+			"The provider wants to become owner of all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will be able to access, modify and delete said objects on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,Selector.Name,Adopt=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Name:  "bar",
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Adopt:    true,
+				Required: true,
+			},
+			"The provider wants to become owner of the following user-created foo objects (apiVersion: \"v1\") referenced with:\n" +
+				"	name: \"bar\"\n" +
+				"The provider will be able to access, modify and delete said objects on your cluster.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,OnConflict={}",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required:   true,
+				OnConflict: &kubebindv1alpha1.OnConflictOptions{},
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,OnConflict.ProviderOverwrites=false",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				OnConflict: &kubebindv1alpha1.OnConflictOptions{
+					ProviderOverwrites: false,
+				},
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,OnConflict.ProviderOverwrites=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				OnConflict: &kubebindv1alpha1.OnConflictOptions{
+					ProviderOverwrites: true,
+				},
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Conflicting objects will be overwritten and created objects will not be recreated upon deletion.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,UpdateOptions={}",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				Update:   &kubebindv1alpha1.UpdateOptions{},
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,UpdateOptions.Fields",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				Update: &kubebindv1alpha1.UpdateOptions{
+					Fields: []string{"foo", "bar"},
+				},
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"The following fields of the objects will still be managed by the user:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,UpdateOptions.Preserving",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				Update: &kubebindv1alpha1.UpdateOptions{
+					Preserving: []string{"foo", "bar"},
+				},
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"The following fields of the objects will still be managed by the provider:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,UpdateOptions.AlwaysRecreate=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				Update: &kubebindv1alpha1.UpdateOptions{
+					AlwaysRecreate: true,
+				},
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Modification of said objects will by handled by deletion and recreation of said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,UpdateOptions.Fields,Adopt=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				Adopt:    true,
+				Update: &kubebindv1alpha1.UpdateOptions{
+					Fields: []string{"foo", "bar"},
+				},
+			},
+			"The provider wants to become owner of all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will be able to access, modify and delete said objects on your cluster.\n" +
+				"The following fields of the objects will still be managed by the provider:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Owner=Consumer,UpdateOptions.Preserving,Adopt=true",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Owner: kubebindv1alpha1.Consumer,
+				},
+				Required: true,
+				Adopt:    true,
+				Update: &kubebindv1alpha1.UpdateOptions{
+					Preserving: []string{"foo", "bar"},
+				},
+			},
+			"The provider wants to become owner of all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will be able to access, modify and delete said objects on your cluster.\n" +
+				"The following fields of the objects will still be managed by the user:\n" +
+				"	\"foo\"\n" +
+				"	\"bar\"\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Selector={}",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version:  "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{},
+				Required: true,
+			},
+			"The provider wants read access to all user-created foo objects (apiVersion: \"v1\").\n" +
+				"The provider will not be able to modify or delete said objects.\n" +
+				"Accepting this Permission is required in order to proceed.\n" +
+				"Do you accept this Permission? [No,Yes]\n",
+		},
+		{"Selector.Owner=\"\",Selector.Name",
+			kubebindv1alpha1.PermissionClaim{
+				GroupResource: kubebindv1alpha1.GroupResource{
+					Group:    "",
+					Resource: "foo",
+				},
+				Version: "v1",
+				Selector: kubebindv1alpha1.ResourceSelector{
+					Name: "bar",
+				},
+				Required: true,
+			},
+			"The provider wants read access to the following user-created foo objects (apiVersion: \"v1\") referenced with:\n" +
+				"	name: \"bar\"\n" +
 				"The provider will not be able to modify or delete said objects.\n" +
 				"Accepting this Permission is required in order to proceed.\n" +
 				"Do you accept this Permission? [No,Yes]\n",
