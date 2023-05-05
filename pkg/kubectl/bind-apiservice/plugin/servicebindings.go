@@ -1,5 +1,5 @@
 /*
-Copyright 2022 The Kube Bind Authors.
+Copyright 2023 The Kube Bind Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -141,7 +141,6 @@ func (b *BindAPIServiceOptions) createAPIServiceBindings(ctx context.Context, co
 	return bindings, nil
 }
 
-//Print Permission Claim to provided Writer
 func printPermissionClaim(w io.Writer, p kubebindv1alpha1.PermissionClaim) error {
 	var b bytes.Buffer
 
@@ -175,63 +174,55 @@ func printPermissionClaim(w io.Writer, p kubebindv1alpha1.PermissionClaim) error
 func writeFirstLines(b *bytes.Buffer, groupResource string, claim kubebindv1alpha1.PermissionClaim) error {
 	var err error
 
-	selector := claim.Selector
-
-	switch {
-	case selector == kubebindv1alpha1.ResourceSelector{} || selector.Owner == "":
-		selector.Owner = kubebindv1alpha1.Consumer
-		err = writeConsumerCase(b, groupResource, claim)
-	case selector.Owner == kubebindv1alpha1.Provider:
-		err = writeProviderCase(b, groupResource, claim)
-	case selector.Owner == kubebindv1alpha1.Consumer:
-		err = writeConsumerCase(b, groupResource, claim)
-	}
-	return err
-}
-
-func writeProviderCase(b *bytes.Buffer, groupResource string, claim kubebindv1alpha1.PermissionClaim) error {
-	var err error
-
 	donate := false
 	if claim.Create != nil {
 		donate = claim.Create.Donate
 	}
-
-	selectorName := claim.Selector.Name
-
-	switch {
-	case donate && selectorName == "":
-		_, err = fmt.Fprintf(b, "Create and modify user-owned %s on your cluster.\n", groupResource)
-	case !donate && selectorName == "":
-		_, err = fmt.Fprintf(b, "Create and modify provider owned %s on your cluster.\n", groupResource)
-	case donate && selectorName != "":
-		_, err = fmt.Fprintf(b, "Create and modify the following user-owned %s on your cluster referenced with:\n	name: \"%s\"\n", groupResource, claim.Selector.Name)
-	case !donate && selectorName != "":
-		_, err = fmt.Fprintf(b, "Create and modify the following provider owned %s on your cluster referenced with:\n	name: \"%s\"\n", groupResource, claim.Selector.Name)
-	}
-
-	return err
-}
-
-func writeConsumerCase(b *bytes.Buffer, groupResource string, claim kubebindv1alpha1.PermissionClaim) error {
-	var err error
-
 	adopt := claim.Adopt
-	selectorName := claim.Selector.Name
 
+	name := ""
+	var owner kubebindv1alpha1.Owner
+	if (claim.Selector != kubebindv1alpha1.ResourceSelector{}) {
+		name = claim.Selector.Name
+		owner = claim.Selector.Owner
+	}
+	var postamble string
 	switch {
-	case adopt && selectorName != "":
-		_, err = fmt.Fprintf(b, "The provider wants to become owner of the following user-created %s referenced with:\n	name: \"%s\"\nThe provider will be able to access, modify and delete said objects on your cluster.\n", groupResource, claim.Selector.Name)
-	case !adopt && selectorName != "":
-		_, err = fmt.Fprintf(b, "The provider wants read access to the following user-created %s referenced with:\n	name: \"%s\"\nThe provider will not be able to modify or delete said objects.\n", groupResource, claim.Selector.Name)
-	case adopt && selectorName == "":
-		_, err = fmt.Fprintf(b, "The provider wants to become owner of all user-created %s.\nThe provider will be able to access, modify and delete said objects on your cluster.\n", groupResource)
-	case !adopt && selectorName == "":
-		_, err = fmt.Fprintf(b, "The provider wants read access to all user-created %s.\nThe provider will not be able to modify or delete said objects.\n", groupResource)
+	case !donate && !adopt:
+		groupResource = "read " + groupResource
+	case donate && !adopt:
+		groupResource = "create " + groupResource
+	case !donate && adopt:
+		groupResource = "have ownership of " + groupResource
+		postamble = " and assign the ownership to you"
+	case donate && adopt:
+		groupResource = "create" + groupResource
+		postamble = " and wants to keep the ownership"
+	}
+
+	_, err = fmt.Fprintf(b, "The provider wants to %s on your cluster%s.", groupResource, postamble) //xxx
+
+	if owner == kubebindv1alpha1.Consumer {
+		owner = "you"
+	}
+	if owner == kubebindv1alpha1.Provider {
+		owner = "the provider"
+	}
+	switch {
+	case owner == "" && name == "":
+		_, err = fmt.Fprintf(b, "\n")
+	case owner != "" && name == "":
+		_, err = fmt.Fprintf(b, " This only applies to objects which are owned by %s.\n", owner)
+	case owner == "" && name != "":
+		_, err = fmt.Fprintf(b, " This only applies to objects which are referenced with:\n	name: \"%s\"\n", name)
+	case owner != "" && name != "":
+		_, err = fmt.Fprintf(b, " This only applies to objects which are owned by %s and to objects which are referenced with:\n	name: \"%s\"\n", owner, name)
 	}
 
 	return err
+
 }
+
 func writeOnConflict(b *bytes.Buffer, claim kubebindv1alpha1.PermissionClaim) error {
 	var err error
 
@@ -256,30 +247,13 @@ func writeUpdateClause(b *bytes.Buffer, claim kubebindv1alpha1.PermissionClaim) 
 		return nil
 	}
 
-	donate := false
-	if claim.Create != nil {
-		donate = claim.Create.Donate
+	if claim.Update.Fields != nil {
+		_, err = b.WriteString("The following fields of the objects will still be able to be changed by owner of this claim:\n")
+	}
+	if claim.Update.Preserving != nil {
+		_, err = b.WriteString("The following fields of the objects will be overwritten with their initial values, if they are modified:\n")
 	}
 
-	owner := claim.Selector.Owner
-	switch {
-	case (owner == kubebindv1alpha1.Provider && !donate && claim.Update.Fields != nil):
-		fallthrough
-	case (owner == kubebindv1alpha1.Provider && donate && claim.Update.Preserving != nil):
-		fallthrough
-	case (owner == kubebindv1alpha1.Consumer && !claim.Adopt && claim.Update.Preserving != nil):
-		fallthrough
-	case (owner == kubebindv1alpha1.Consumer && claim.Adopt && claim.Update.Fields != nil):
-		_, err = b.WriteString("The following fields of the objects will still be managed by the provider:\n")
-	case (owner == kubebindv1alpha1.Provider && !donate && claim.Update.Preserving != nil):
-		fallthrough
-	case (owner == kubebindv1alpha1.Provider && donate && claim.Update.Fields != nil):
-		fallthrough
-	case (owner == kubebindv1alpha1.Consumer && !claim.Adopt && claim.Update.Fields != nil):
-		fallthrough
-	case (owner == kubebindv1alpha1.Consumer && claim.Adopt && claim.Update.Preserving != nil):
-		_, err = b.WriteString("The following fields of the objects will still be managed by the user:\n")
-	}
 	for _, s := range append(claim.Update.Fields, claim.Update.Preserving...) {
 		_, err = fmt.Fprintf(b, "	\"%s\"\n", s)
 	}
