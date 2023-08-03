@@ -36,10 +36,40 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/yaml"
 )
 
 //go:embed *.yaml
 var raw embed.FS
+
+func CRDs() ([]apiextensionsv1.CustomResourceDefinition, error) {
+	entries, err := raw.ReadDir(".")
+	if err != nil {
+		return nil, fmt.Errorf("readdir: %w", err)
+	}
+
+	var crds []apiextensionsv1.CustomResourceDefinition
+
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		b, err := raw.ReadFile(e.Name())
+		if err != nil {
+			return nil, fmt.Errorf("name:%s:%w", e.Name(), err)
+		}
+
+		var crd apiextensionsv1.CustomResourceDefinition
+
+		if err := yaml.Unmarshal(b, &crd); err != nil {
+			return nil, err
+		}
+
+		crds = append(crds, crd)
+	}
+
+	return crds, nil
+}
 
 // CreateFromFS creates the given CRDs using the target client from the
 // provided filesystem and waits for it to become established. This call is blocking.

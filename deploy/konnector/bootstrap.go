@@ -17,8 +17,10 @@ limitations under the License.
 package konnector
 
 import (
+	"bytes"
 	"context"
 	"embed"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/discovery"
@@ -34,4 +36,29 @@ func Bootstrap(ctx context.Context, discoveryClient discovery.DiscoveryInterface
 	return bootstrap.Bootstrap(ctx, discoveryClient, dynamicClient, sets.NewString(), raw,
 		bootstrap.ReplaceOption("IMAGE", image),
 	)
+}
+
+func Bytes(image string) ([][]byte, error) {
+	entries, err := raw.ReadDir(".")
+	if err != nil {
+		return nil, fmt.Errorf("readdir: %w", err)
+	}
+
+	var manifestBytes [][]byte
+
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		b, err := raw.ReadFile(e.Name())
+		if err != nil {
+			return nil, fmt.Errorf("name:%s:%w", e.Name(), err)
+		}
+
+		b = bytes.ReplaceAll(b, []byte("IMAGE"), []byte(image))
+
+		manifestBytes = append(manifestBytes, b)
+	}
+
+	return manifestBytes, nil
 }
