@@ -1,5 +1,5 @@
 /*
-Copyright 2022 The Kube Bind Authors.
+Copyright 2023 The Kube Bind Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -111,6 +111,8 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		upstream.SetFinalizers(nil)
 		unstructured.RemoveNestedField(upstream.Object, "status")
 
+		upstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
+
 		logger.Info("Creating upstream object")
 		if _, err := r.createProviderObject(ctx, upstream); err != nil && !errors.IsAlreadyExists(err) {
 			return err
@@ -176,6 +178,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 
 	logger.Info("Updating update object")
 	upstream.SetManagedFields(nil) // server side apply does not want this
+	upstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
 	if _, err := r.updateProviderObject(ctx, upstream); err != nil {
 		return err
 	}
