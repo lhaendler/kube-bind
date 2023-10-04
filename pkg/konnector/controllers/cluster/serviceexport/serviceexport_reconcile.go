@@ -1,5 +1,5 @@
 /*
-Copyright 2022 The Kube Bind Authors.
+Copyright 2023 The Kube Bind Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ import (
 	"github.com/kube-bind/kube-bind/pkg/apis/third_party/conditions/util/conditions"
 	bindlisters "github.com/kube-bind/kube-bind/pkg/client/listers/kubebind/v1alpha1"
 	"github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/claimedresources"
+	"github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/serviceexport/adopt"
 	"github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/serviceexport/multinsinformer"
 	"github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/serviceexport/spec"
 	"github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/serviceexport/status"
@@ -209,6 +210,19 @@ func (r *reconciler) ensureControllers(ctx context.Context, name string, export 
 		runtime.HandleError(err)
 		return nil // nothing we can do here
 	}
+	adoptCtrl, err := adopt.NewController(
+		gvr,
+		r.providerNamespace,
+		r.consumerConfig,
+		r.providerConfig,
+		consumerInf.ForResource(gvr),
+		providerInf,
+		r.serviceNamespaceInformer,
+	)
+	if err != nil {
+		runtime.HandleError(err)
+		return nil // nothing we can do here
+	}
 
 	var claimControllers []func(context.Context, int)
 	for _, claim := range binding.Spec.PermissionClaims {
@@ -291,6 +305,7 @@ func (r *reconciler) ensureControllers(ctx context.Context, name string, export 
 
 		go specCtrl.Start(ctx, 1)
 		go statusCtrl.Start(ctx, 1)
+		go adoptCtrl.Start(ctx, 1)
 
 		for _, f := range claimControllers {
 			go f(ctx, 1)

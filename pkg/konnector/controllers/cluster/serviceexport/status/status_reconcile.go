@@ -67,6 +67,11 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		logger.Info("failed to get downstream object", "error", err, "downstreamNamespace", ns, "downstreamName", obj.GetName())
 		return err
 	} else if errors.IsNotFound(err) {
+		if v, ok := obj.GetAnnotations()["kube-bind.io/bound"]; !ok && v != "true" {
+			// object has not been bound by kube-bind, skip delete
+			return nil
+		}
+
 		// downstream is gone. Delete upstream too. Note that we cannot rely on the spec controller because
 		// due to konnector restart it might have missed the deletion event.
 		logger.Info("Deleting upstream object because downstream is gone", "downstreamNamespace", ns, "downstreamName", obj.GetName())
@@ -78,6 +83,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 
 	orig := downstream
 	downstream = downstream.DeepCopy()
+	downstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
 	status, found, err := unstructured.NestedFieldNoCopy(obj.Object, "status")
 	if err != nil {
 		runtime.HandleError(err)
