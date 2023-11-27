@@ -154,7 +154,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 	}
 	upstreamSpec, _, err := unstructured.NestedFieldNoCopy(upstream.Object, "spec")
 	if err != nil {
-		logger.Error(err, "failed to get downstream spec")
+		logger.Error(err, "failed to get upstream spec")
 		return nil
 	}
 	if reflect.DeepEqual(downstreamSpec, upstreamSpec) {
@@ -176,7 +176,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		unstructured.RemoveNestedField(upstream.Object, "spec")
 	}
 
-	logger.Info("Updating update object")
+	logger.Info("Updating upstream object")
 	upstream.SetManagedFields(nil) // server side apply does not want this
 	upstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
 	if _, err := r.updateProviderObject(ctx, upstream); err != nil {

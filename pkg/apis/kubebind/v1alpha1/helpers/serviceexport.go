@@ -119,6 +119,7 @@ func CRDToServiceExport(crd *apiextensionsv1.CustomResourceDefinition) (*kubebin
 		spec.Versions = append(spec.Versions, apiResourceVersion)
 
 		if onlyFirstServingVersion {
+			spec.Versions[0].Storage = true
 			break
 		}
 	}

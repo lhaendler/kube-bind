@@ -29,6 +29,7 @@ import (
 	"gopkg.in/headzoo/surf.v1"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -39,6 +40,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
+	clusterscoped "github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/serviceexport/cluster-scoped"
 	providerfixtures "github.com/kube-bind/kube-bind/test/e2e/bind/fixtures/provider"
 	"github.com/kube-bind/kube-bind/test/e2e/framework"
 )
@@ -46,16 +48,20 @@ import (
 func TestClusterScoped(t *testing.T) {
 	t.Parallel()
 
-	testHappyCase(t, kubebindv1alpha1.ClusterScope)
+	// cluster scoped resource, with cluster scoped informers
+	testHappyCase(t, apiextensionsv1.ClusterScoped, kubebindv1alpha1.ClusterScope)
 }
 
 func TestNamespacedScoped(t *testing.T) {
 	t.Parallel()
 
-	testHappyCase(t, kubebindv1alpha1.NamespacedScope)
+	// namespaced resource, with namespace scoped informers
+	testHappyCase(t, apiextensionsv1.NamespaceScoped, kubebindv1alpha1.NamespacedScope)
+	// namespaced resource, but with cluster scoped informers
+	testHappyCase(t, apiextensionsv1.NamespaceScoped, kubebindv1alpha1.ClusterScope)
 }
 
-func testHappyCase(t *testing.T, scope kubebindv1alpha1.Scope) {
+func testHappyCase(t *testing.T, resourceScope apiextensionsv1.ResourceScope, informerScope kubebindv1alpha1.Scope) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -63,112 +69,144 @@ func testHappyCase(t *testing.T, scope kubebindv1alpha1.Scope) {
 	providerConfig, providerKubeconfig := framework.NewWorkspace(t, framework.ClientConfig(t), framework.WithGenerateName("test-happy-case-provider"))
 
 	t.Logf("Starting backend with random port")
-	addr, _ := framework.StartBackend(t, providerConfig, "--kubeconfig="+providerKubeconfig, "--listen-port=0", "--consumer-scope="+string(scope))
+	addr, _ := framework.StartBackend(t, providerConfig, "--kubeconfig="+providerKubeconfig, "--listen-port=0", "--consumer-scope="+string(informerScope))
 
-	t.Logf("Creating MangoDB CRD on provider side")
+	t.Logf("Creating CRDs on provider side")
 	providerfixtures.Bootstrap(t, framework.DiscoveryClient(t, providerConfig), framework.DynamicClient(t, providerConfig), nil)
 
 	t.Logf("Creating consumer workspace and starting konnector")
 	consumerConfig, consumerKubeconfig := framework.NewWorkspace(t, framework.ClientConfig(t), framework.WithGenerateName("test-happy-case-consumer"))
 	framework.StartKonnector(t, consumerConfig, "--kubeconfig="+consumerKubeconfig)
 
-	consumerClient := framework.DynamicClient(t, consumerConfig).Resource(
-		schema.GroupVersionResource{Group: "mangodb.com", Version: "v1alpha1", Resource: "mangodbs"},
-	).Namespace("default")
-	providerClient := framework.DynamicClient(t, providerConfig).Resource(
-		schema.GroupVersionResource{Group: "mangodb.com", Version: "v1alpha1", Resource: "mangodbs"},
-	)
-	providerKubeClient := framework.KubeClient(t, providerConfig)
-	consumerKubeClient := framework.KubeClient(t, consumerConfig)
-	upstreamNS := "unknown"
-	downstreamNS := "unknown"
+	serviceGVR := schema.GroupVersionResource{Group: "mangodb.com", Version: "v1alpha1", Resource: "mangodbs"}
+	if resourceScope == apiextensionsv1.ClusterScoped {
+		serviceGVR = schema.GroupVersionResource{Group: "bar.io", Version: "v1alpha1", Resource: "foos"}
+	}
+	consumerClient := framework.DynamicClient(t, consumerConfig).Resource(serviceGVR)
+	providerClient := framework.DynamicClient(t, providerConfig).Resource(serviceGVR)
 
-	for _, tc := range []struct {
-		name string
-		step func(t *testing.T)
-	}{
-		{
-			name: "MangoDB is bound dry run",
-			step: func(t *testing.T) {
-				iostreams, _, bufOut, _ := genericclioptions.NewTestIOStreams()
-				authURLDryRunCh := make(chan string, 1)
-				go simulateBrowser(t, authURLDryRunCh, "mangodbs")
-				framework.Bind(t, iostreams, authURLDryRunCh, nil, fmt.Sprintf("http://%s/export", addr.String()), "--kubeconfig", consumerKubeconfig, "--skip-konnector", "--dry-run")
-				_, err := yaml.YAMLToJSON(bufOut.Bytes())
-				require.NoError(t, err)
-			},
-		},
-		{
-			name: "MangoDB is bound",
-			step: func(t *testing.T) {
-				in := bytes.NewBufferString("y\n")
-				iostreams, _, _, _ := genericclioptions.NewTestIOStreams()
-				authURLCh := make(chan string, 1)
-				go simulateBrowser(t, authURLCh, "mangodbs")
-				invocations := make(chan framework.SubCommandInvocation, 1)
-				framework.Bind(t, iostreams, authURLCh, invocations, fmt.Sprintf("http://%s/export", addr.String()), "--kubeconfig", consumerKubeconfig, "--skip-konnector")
-				inv := <-invocations
-				requireEqualSlicePattern(t, []string{"apiservice", "--remote-kubeconfig-namespace", "*", "--remote-kubeconfig-name", "*", "-f", "*", "--kubeconfig=" + consumerKubeconfig, "--skip-konnector=true", "--no-banner"}, inv.Args)
-				framework.BindAPIService(t, in, "", inv.Args...)
-
-				t.Logf("Waiting for MangoDB CRD to be created on consumer side")
-				crdClient := framework.ApiextensionsClient(t, consumerConfig).ApiextensionsV1().CustomResourceDefinitions()
-				require.Eventually(t, func() bool {
-					_, err := crdClient.Get(ctx, "mangodbs.mangodb.com", metav1.GetOptions{})
-					return err == nil
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for MangoDB CRD to be created on consumer side")
-			},
-		},
-		{
-			name: "instances are synced",
-			step: func(t *testing.T) {
-				t.Logf("Trying to create MangoDB on consumer side")
-
-				require.Eventually(t, func() bool {
-					_, err := consumerClient.Create(ctx, toUnstructured(t, `
+	mangodbInstance := `
 apiVersion: mangodb.com/v1alpha1
 kind: MangoDB
 metadata:
   name: test
 spec:
   tokenSecret: credentials
-`), metav1.CreateOptions{})
+`
+	fooInstance := `
+apiVersion: bar.io/v1alpha1
+kind: Foo
+metadata:
+  name: test
+spec:
+  deploymentName: test-foo
+  replicas: 2
+`
+
+	providerKubeClient := framework.KubeClient(t, providerConfig)
+	consumerKubeClient := framework.KubeClient(t, consumerConfig)
+
+	downstreamNs, upstreamNS := "default", "unknown"
+	clusterNs, clusterScopedUpInsName := "unknown", "unknown"
+
+	for _, tc := range []struct {
+		name string
+		step func(t *testing.T)
+	}{
+		{
+			name: "Service is bound dry run",
+			step: func(t *testing.T) {
+				iostreams, _, bufOut, _ := genericclioptions.NewTestIOStreams()
+				authURLDryRunCh := make(chan string, 1)
+				go simulateBrowser(t, authURLDryRunCh, serviceGVR.Resource)
+				framework.Bind(t, iostreams, authURLDryRunCh, nil, fmt.Sprintf("http://%s/export", addr.String()), "--kubeconfig", consumerKubeconfig, "--skip-konnector", "--dry-run")
+				_, err := yaml.YAMLToJSON(bufOut.Bytes())
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "Service is bound",
+			step: func(t *testing.T) {
+				in := bytes.NewBufferString("y\ny\n")
+				iostreams, _, _, _ := genericclioptions.NewTestIOStreams()
+				authURLCh := make(chan string, 1)
+				go simulateBrowser(t, authURLCh, serviceGVR.Resource)
+				invocations := make(chan framework.SubCommandInvocation, 1)
+				framework.Bind(t, iostreams, authURLCh, invocations, fmt.Sprintf("http://%s/export", addr.String()), "--kubeconfig", consumerKubeconfig, "--skip-konnector")
+				inv := <-invocations
+				requireEqualSlicePattern(t, []string{"apiservice", "--remote-kubeconfig-namespace", "*", "--remote-kubeconfig-name", "*", "-f", "*", "--kubeconfig=" + consumerKubeconfig, "--skip-konnector=true", "--no-banner"}, inv.Args)
+				framework.BindAPIService(t, in, "", inv.Args...)
+
+				t.Logf("Waiting for %s CRD to be created on consumer side", serviceGVR.Resource)
+				crdClient := framework.ApiextensionsClient(t, consumerConfig).ApiextensionsV1().CustomResourceDefinitions()
+				require.Eventually(t, func() bool {
+					_, err := crdClient.Get(ctx, serviceGVR.Resource+"."+serviceGVR.Group, metav1.GetOptions{})
 					return err == nil
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for MangoDB CRD to be created on consumer side")
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for %s CRD to be created on consumer side", serviceGVR.Resource)
+			},
+		},
+		{
+			name: "instances are synced",
+			step: func(t *testing.T) {
+				t.Logf("Trying to create %s on consumer side", serviceGVR.Resource)
 
-				t.Logf("Waiting for the MangoDB instance to be created on consumer side")
-				var consumerMangos *unstructured.UnstructuredList
+				t.Logf("Waiting for the %s instance to be created on provider side", serviceGVR.Resource)
 				require.Eventually(t, func() bool {
 					var err error
-					consumerMangos, err = consumerClient.List(ctx, metav1.ListOptions{})
-					return err == nil && len(consumerMangos.Items) == 1
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the MangoDB instance to be created on consumer side")
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						_, err = consumerClient.Namespace(downstreamNs).Create(ctx, toUnstructured(t, mangodbInstance), metav1.CreateOptions{})
+					} else {
+						_, err = consumerClient.Create(ctx, toUnstructured(t, fooInstance), metav1.CreateOptions{})
+					}
+					return err == nil
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for %s instance to be created on consumer side", serviceGVR.Resource)
 
-				// this is used everywhere further down
-				downstreamNS = consumerMangos.Items[0].GetNamespace()
-
-				t.Logf("Waiting for the MangoDB instance to be created on provider side")
-				var mangos *unstructured.UnstructuredList
+				t.Logf("Waiting for the %s instance to be created on consumer side", serviceGVR.Resource)
+				var consumerInstances *unstructured.UnstructuredList
 				require.Eventually(t, func() bool {
 					var err error
-					mangos, err = providerClient.List(ctx, metav1.ListOptions{})
-					return err == nil && len(mangos.Items) == 1
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the MangoDB instance to be created on provider side")
+					consumerInstances, err = consumerClient.List(ctx, metav1.ListOptions{})
+					return err == nil && len(consumerInstances.Items) == 1
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the %s instance to be created on consumer side", serviceGVR.Resource)
 
 				// this is used everywhere further down
-				upstreamNS = mangos.Items[0].GetNamespace()
+				downstreamNs = consumerInstances.Items[0].GetNamespace()
+
+				var instances *unstructured.UnstructuredList
+				require.Eventually(t, func() bool {
+					var err error
+					instances, err = providerClient.List(ctx, metav1.ListOptions{})
+					return err == nil && len(instances.Items) == 1
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the %s instance to be created on provider side", serviceGVR.Resource)
+
+				// these are used everywhere further down
+				upstreamNS = instances.Items[0].GetNamespace()
+				if resourceScope == apiextensionsv1.ClusterScoped {
+					clusterNs, _ = clusterscoped.ExtractClusterNs(&instances.Items[0])
+					clusterScopedUpInsName = clusterscoped.Prepend("test", clusterNs)
+				}
 			},
 		},
 		{
 			name: "instance deleted upstream is recreated",
 			step: func(t *testing.T) {
-				err := providerClient.Namespace(upstreamNS).Delete(ctx, "test", metav1.DeleteOptions{})
+				var err error
+				if resourceScope == apiextensionsv1.NamespaceScoped {
+					err = providerClient.Namespace(upstreamNS).Delete(ctx, "test", metav1.DeleteOptions{})
+				} else {
+					err = providerClient.Delete(ctx, clusterScopedUpInsName, metav1.DeleteOptions{})
+				}
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					_, err := providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						_, err = providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						_, err = providerClient.Get(ctx, clusterScopedUpInsName, metav1.GetOptions{})
+					}
 					return err == nil
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the MangoDB instance to be recreated upstream")
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the %s instance to be recreated upstream", serviceGVR.Resource)
 			},
 		},
 		{
@@ -192,7 +230,7 @@ spec:
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					s, err := consumerKubeClient.CoreV1().Secrets(downstreamNS).Get(ctx, "test-secret", metav1.GetOptions{})
+					s, err := consumerKubeClient.CoreV1().Secrets(downstreamNs).Get(ctx, "test-secret", metav1.GetOptions{})
 					return err == nil && reflect.DeepEqual(testSecret.Data, s.Data)
 				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the claimed resource to be created downstream")
 			},
@@ -200,11 +238,11 @@ spec:
 		{
 			name: "claimed resource recreated downstream if created upstream",
 			step: func(t *testing.T) {
-				err := consumerKubeClient.CoreV1().Secrets(downstreamNS).Delete(ctx, "test-secret", metav1.DeleteOptions{})
+				err := consumerKubeClient.CoreV1().Secrets(downstreamNs).Delete(ctx, "test-secret", metav1.DeleteOptions{})
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					_, err := consumerKubeClient.CoreV1().Secrets(downstreamNS).Get(ctx, "test-secret", metav1.GetOptions{})
+					_, err := consumerKubeClient.CoreV1().Secrets(downstreamNs).Get(ctx, "test-secret", metav1.GetOptions{})
 					return err == nil
 				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the claimed resource to be created downstream")
 			},
@@ -222,7 +260,7 @@ spec:
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					obj, err := consumerKubeClient.CoreV1().Secrets(downstreamNS).Get(ctx, "test-secret", metav1.GetOptions{})
+					obj, err := consumerKubeClient.CoreV1().Secrets(downstreamNs).Get(ctx, "test-secret", metav1.GetOptions{})
 					require.NoError(t, err)
 					updatedValue, ok := obj.Data["test"]
 					if !ok {
@@ -249,75 +287,153 @@ spec:
 			name: "instance spec updated downstream is updated upstream",
 			step: func(t *testing.T) {
 				err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-					obj, err := consumerClient.Get(ctx, "test", metav1.GetOptions{})
+					var obj *unstructured.Unstructured
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						obj, err = consumerClient.Namespace(downstreamNs).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						obj, err = consumerClient.Get(ctx, "test", metav1.GetOptions{})
+					}
 					require.NoError(t, err)
-					unstructured.SetNestedField(obj.Object, "Dedicated", "spec", "tier") // nolint: errcheck
-					_, err = consumerClient.Update(ctx, obj, metav1.UpdateOptions{})
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						unstructured.SetNestedField(obj.Object, "Dedicated", "spec", "tier") // nolint: errcheck
+						_, err = consumerClient.Namespace(downstreamNs).Update(ctx, obj, metav1.UpdateOptions{})
+					} else {
+						unstructured.SetNestedField(obj.Object, "tested", "spec", "deploymentName") // nolint: errcheck
+						_, err = consumerClient.Update(ctx, obj, metav1.UpdateOptions{})
+					}
 					return err
 				})
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					obj, err := providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					var obj *unstructured.Unstructured
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						obj, err = providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						obj, err = providerClient.Get(ctx, clusterScopedUpInsName, metav1.GetOptions{})
+					}
 					require.NoError(t, err)
-					value, _, err := unstructured.NestedString(obj.Object, "spec", "tier")
+					var value string
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						value, _, err = unstructured.NestedString(obj.Object, "spec", "tier")
+					} else {
+						value, _, err = unstructured.NestedString(obj.Object, "spec", "deploymentName")
+					}
 					require.NoError(t, err)
-					return value == "Dedicated"
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the MangoDB instance to be updated upstream")
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						return value == "Dedicated"
+					} else {
+						return value == "tested"
+					}
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the %s instance to be updated upstream", serviceGVR.Resource)
 			},
 		},
 		{
 			name: "instance status updated upstream is updated downstream",
 			step: func(t *testing.T) {
 				err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-					obj, err := providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					var obj *unstructured.Unstructured
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						obj, err = providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						obj, err = providerClient.Get(ctx, clusterScopedUpInsName, metav1.GetOptions{})
+					}
 					require.NoError(t, err)
 					unstructured.SetNestedField(obj.Object, "Running", "status", "phase") // nolint: errcheck
-					_, err = providerClient.Namespace(upstreamNS).UpdateStatus(ctx, obj, metav1.UpdateOptions{})
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						_, err = providerClient.Namespace(upstreamNS).UpdateStatus(ctx, obj, metav1.UpdateOptions{})
+					} else {
+						_, err = providerClient.UpdateStatus(ctx, obj, metav1.UpdateOptions{})
+					}
 					return err
 				})
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					obj, err := consumerClient.Get(ctx, "test", metav1.GetOptions{})
+					var obj *unstructured.Unstructured
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						obj, err = consumerClient.Namespace(downstreamNs).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						obj, err = consumerClient.Get(ctx, "test", metav1.GetOptions{})
+					}
 					require.NoError(t, err)
 					value, _, err := unstructured.NestedString(obj.Object, "status", "phase")
 					require.NoError(t, err)
 					return value == "Running"
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the MangoDB instance to be updated downstream")
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the %s instance to be updated downstream", serviceGVR.Resource)
 			},
 		},
 		{
 			name: "instance spec updated upstream is reconciled upstream",
 			step: func(t *testing.T) {
 				err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-					obj, err := providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					var obj *unstructured.Unstructured
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						obj, err = providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						obj, err = providerClient.Get(ctx, clusterScopedUpInsName, metav1.GetOptions{})
+					}
 					require.NoError(t, err)
-					unstructured.SetNestedField(obj.Object, "Shared", "spec", "tier") // nolint: errcheck
-					_, err = providerClient.Namespace(upstreamNS).Update(ctx, obj, metav1.UpdateOptions{})
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						unstructured.SetNestedField(obj.Object, "Shared", "spec", "tier") // nolint: errcheck
+						_, err = providerClient.Namespace(upstreamNS).Update(ctx, obj, metav1.UpdateOptions{})
+					} else {
+						unstructured.SetNestedField(obj.Object, "drifting", "spec", "deploymentName") // nolint: errcheck
+						_, err = providerClient.Update(ctx, obj, metav1.UpdateOptions{})
+					}
 					return err
 				})
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					obj, err := providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					var obj *unstructured.Unstructured
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						obj, err = providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						obj, err = providerClient.Get(ctx, clusterScopedUpInsName, metav1.GetOptions{})
+					}
 					require.NoError(t, err)
-					value, _, err := unstructured.NestedString(obj.Object, "spec", "tier")
+					var value string
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						value, _, err = unstructured.NestedString(obj.Object, "spec", "tier")
+					} else {
+						value, _, err = unstructured.NestedString(obj.Object, "spec", "deploymentName")
+					}
 					require.NoError(t, err)
-					return value == "Dedicated"
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the MangoDB instance to be reconciled upstream")
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						return value == "Dedicated"
+					} else {
+						return value == "tested"
+					}
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the %s instance to be reconciled upstream", serviceGVR.Resource)
 			},
 		},
 		{
 			name: "instances deleted downstream are deleted upstream",
 			step: func(t *testing.T) {
-				err := consumerClient.Delete(ctx, "test", metav1.DeleteOptions{})
+				var err error
+				if resourceScope == apiextensionsv1.NamespaceScoped {
+					err = consumerClient.Namespace(downstreamNs).Delete(ctx, "test", metav1.DeleteOptions{})
+				} else {
+					err = consumerClient.Delete(ctx, "test", metav1.DeleteOptions{})
+				}
 				require.NoError(t, err)
 
 				require.Eventually(t, func() bool {
-					_, err := providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					var err error
+					if resourceScope == apiextensionsv1.NamespaceScoped {
+						_, err = providerClient.Namespace(upstreamNS).Get(ctx, "test", metav1.GetOptions{})
+					} else {
+						_, err = providerClient.Get(ctx, clusterScopedUpInsName, metav1.GetOptions{})
+					}
 					return errors.IsNotFound(err)
-				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the MangoDB instance to be deleted on provider side")
+				}, wait.ForeverTestTimeout, time.Millisecond*100, "waiting for the %s instance to be deleted on provider side", serviceGVR.Resource)
 			},
 		},
 		{
@@ -325,7 +441,7 @@ spec:
 			step: func(t *testing.T) {
 				iostreams, _, _, _ := genericclioptions.NewTestIOStreams()
 				authURLCh := make(chan string, 1)
-				go simulateBrowser(t, authURLCh, "mangodbs")
+				go simulateBrowser(t, authURLCh, serviceGVR.Resource)
 				invocations := make(chan framework.SubCommandInvocation, 1)
 				framework.Bind(t, iostreams, authURLCh, invocations, fmt.Sprintf("http://%s/export", addr.String()), "--kubeconfig", consumerKubeconfig, "--skip-konnector")
 				inv := <-invocations

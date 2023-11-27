@@ -53,6 +53,7 @@ const (
 func NewController(
 	config *rest.Config,
 	scope kubebindv1alpha1.Scope,
+	isolation kubebindv1alpha1.Isolation,
 	serviceExportRequestInformer bindinformers.APIServiceExportRequestInformer,
 	serviceExportInformer bindinformers.APIServiceExportInformer,
 	crdInformer apiextensionsinformers.CustomResourceDefinitionInformer,
@@ -89,7 +90,8 @@ func NewController(
 		crdIndexer: crdInformer.Informer().GetIndexer(),
 
 		reconciler: reconciler{
-			informerScope: scope,
+			informerScope:          scope,
+			clusterScopedIsolation: isolation,
 			getCRD: func(name string) (*apiextensionsv1.CustomResourceDefinition, error) {
 				return crdInformer.Lister().Get(name)
 			},
