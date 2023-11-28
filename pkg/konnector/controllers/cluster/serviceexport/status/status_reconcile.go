@@ -55,7 +55,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 			return err // hoping the status is set soon.
 		}
 
-		logger = logger.WithValues("upstreamNamespace", sn.Status.Namespace)
+		logger = logger.WithValues("upstreamNamespace", sn.Status.Namespace, "name", obj.GetName())
 		ctx = klog.NewContext(ctx, logger)
 
 		// continue with downstream namespace
@@ -83,7 +83,10 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 
 	orig := downstream
 	downstream = downstream.DeepCopy()
-	downstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
+	ann := downstream.GetAnnotations()
+	ann["kube-bind.io/bound"] = "true"
+	downstream.SetAnnotations(ann)
+
 	status, found, err := unstructured.NestedFieldNoCopy(obj.Object, "status")
 	if err != nil {
 		runtime.HandleError(err)

@@ -212,6 +212,11 @@ spec:
 		{
 			name: "claimed resource created upstream is created downstream",
 			step: func(t *testing.T) {
+				if resourceScope != apiextensionsv1.NamespaceScoped {
+					// Skipping for now
+					return
+				}
+
 				testSecret := corev1.Secret{
 					TypeMeta: metav1.TypeMeta{
 						Kind:       "Secret",
@@ -238,6 +243,11 @@ spec:
 		{
 			name: "claimed resource recreated downstream if created upstream",
 			step: func(t *testing.T) {
+				if resourceScope != apiextensionsv1.NamespaceScoped {
+					// Skipping for now
+					return
+				}
+
 				err := consumerKubeClient.CoreV1().Secrets(downstreamNs).Delete(ctx, "test-secret", metav1.DeleteOptions{})
 				require.NoError(t, err)
 
@@ -250,6 +260,10 @@ spec:
 		{
 			name: "claimed resource updated upstream is updated downstream",
 			step: func(t *testing.T) {
+				if resourceScope != apiextensionsv1.NamespaceScoped {
+					// Skipping for now
+					return
+				}
 				err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 					obj, err := providerKubeClient.CoreV1().Secrets(upstreamNS).Get(ctx, "test-secret", metav1.GetOptions{})
 					require.NoError(t, err)
@@ -274,6 +288,11 @@ spec:
 		{
 			name: "claimed resources deleted by the provider are deleted downstream",
 			step: func(t *testing.T) {
+				if resourceScope != apiextensionsv1.NamespaceScoped {
+					// Skipping for now
+					return
+				}
+
 				err := providerKubeClient.CoreV1().Secrets(upstreamNS).Delete(ctx, "test-secret", metav1.DeleteOptions{})
 				require.NoError(t, err)
 

@@ -228,6 +228,7 @@ func (r *reconciler) ensureControllers(ctx context.Context, name string, export 
 	adoptCtrl, err := adopt.NewController(
 		gvr,
 		r.providerNamespace,
+		providerNamespaceUID,
 		r.consumerConfig,
 		r.providerConfig,
 		consumerInf.ForResource(gvr),

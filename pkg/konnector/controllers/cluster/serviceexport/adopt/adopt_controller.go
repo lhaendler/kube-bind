@@ -38,18 +38,22 @@ import (
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
 	bindlisters "github.com/kube-bind/kube-bind/pkg/client/listers/kubebind/v1alpha1"
 	"github.com/kube-bind/kube-bind/pkg/indexers"
+	clusterscoped "github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/serviceexport/cluster-scoped"
 	"github.com/kube-bind/kube-bind/pkg/konnector/controllers/cluster/serviceexport/multinsinformer"
 	"github.com/kube-bind/kube-bind/pkg/konnector/controllers/dynamic"
 )
 
 const (
 	controllerName = "kube-bind-konnector-cluster-adopt"
+
+	applyManager = "kube-bind.io"
 )
 
 // NewController returns a new controller reconciling status of upstream to downstream.
 func NewController(
 	gvr schema.GroupVersionResource,
 	providerNamespace string,
+	providerNamespaceUID string,
 	consumerConfig, providerConfig *rest.Config,
 	consumerDynamicInformer informers.GenericInformer,
 	providerDynamicInformer multinsinformer.GetterInformer,
@@ -103,16 +107,77 @@ func NewController(
 				return sns[0].(*kubebindv1alpha1.APIServiceNamespace), nil
 			},
 			getConsumerObject: func(ns, name string) (*unstructured.Unstructured, error) {
-				return dynamicConsumerLister.Namespace(ns).Get(name)
+				if ns != "" {
+					return dynamicConsumerLister.Namespace(ns).Get(name)
+				}
+				got, err := dynamicConsumerLister.Get(clusterscoped.Behead(name, providerNamespace))
+				if err != nil {
+					return nil, err
+				}
+				obj := got.DeepCopy()
+				err = clusterscoped.TranslateFromDownstream(obj, providerNamespace, providerNamespaceUID)
+				if err != nil {
+					return nil, err
+				}
+				return obj, nil
 			},
 			createConsumerObject: func(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-				return consumerClient.Resource(gvr).Namespace(obj.GetNamespace()).Create(ctx, obj, metav1.CreateOptions{})
+				if ns := obj.GetNamespace(); ns != "" {
+					return consumerClient.Resource(gvr).Namespace(obj.GetNamespace()).Create(ctx, obj, metav1.CreateOptions{})
+				}
+				err := clusterscoped.TranslateFromUpstream(obj)
+				if err != nil {
+					return nil, err
+				}
+				created, err := consumerClient.Resource(gvr).Namespace(obj.GetNamespace()).Create(ctx, obj, metav1.CreateOptions{})
+				if err != nil {
+					return nil, err
+				}
+				err = clusterscoped.TranslateFromDownstream(created, providerNamespace, providerNamespaceUID)
+				if err != nil {
+					return nil, err
+				}
+				return created, nil
 			},
 			updateConsumerObject: func(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-				return consumerClient.Resource(gvr).Namespace(obj.GetNamespace()).Update(ctx, obj, metav1.UpdateOptions{})
+				ns := obj.GetNamespace()
+				if ns == "" {
+					if err := clusterscoped.TranslateFromUpstream(obj); err != nil {
+						return nil, err
+					}
+				}
+				updated, err := consumerClient.Resource(gvr).Namespace(obj.GetNamespace()).Update(ctx, obj, metav1.UpdateOptions{})
+				if err != nil {
+					return nil, err
+				}
+				if ns == "" {
+					err = clusterscoped.TranslateFromDownstream(updated, providerNamespace, providerNamespaceUID)
+					if err != nil {
+						return nil, err
+					}
+					return updated, nil
+				}
+				return updated, nil
 			},
 			updateProviderObject: func(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-				return providerClient.Resource(gvr).Namespace(obj.GetNamespace()).Update(ctx, obj, metav1.UpdateOptions{})
+				ns := obj.GetNamespace()
+				if ns == "" {
+					if err := clusterscoped.TranslateFromDownstream(obj, providerNamespace, providerNamespaceUID); err != nil {
+						return nil, err
+					}
+				}
+				updated, err := consumerClient.Resource(gvr).Namespace(obj.GetNamespace()).Update(ctx, obj, metav1.UpdateOptions{})
+				if err != nil {
+					return nil, err
+				}
+				if ns == "" {
+					err = clusterscoped.TranslateFromUpstream(updated)
+					if err != nil {
+						return nil, err
+					}
+					return updated, nil
+				}
+				return updated, nil
 			},
 		},
 	}
