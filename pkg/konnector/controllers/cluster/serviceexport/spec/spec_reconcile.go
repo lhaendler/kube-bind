@@ -29,6 +29,7 @@ import (
 	"k8s.io/klog/v2"
 
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
+	"github.com/kube-bind/kube-bind/pkg/konnector/adopt"
 )
 
 type reconciler struct {
@@ -111,7 +112,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		upstream.SetFinalizers(nil)
 		unstructured.RemoveNestedField(upstream.Object, "status")
 
-		injectBoundAnnotation(upstream)
+		adopt.InjectBoundAnnotation(upstream)
 
 		logger.Info("Creating upstream object")
 		if _, err := r.createProviderObject(ctx, upstream); err != nil && !errors.IsAlreadyExists(err) {
@@ -178,7 +179,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 
 	logger.Info("Updating upstream object")
 	upstream.SetManagedFields(nil) // server side apply does not want this
-	injectBoundAnnotation(upstream)
+	adopt.InjectBoundAnnotation(upstream)
 	if _, err := r.updateProviderObject(ctx, upstream); err != nil {
 		return err
 	}
@@ -235,14 +236,4 @@ func (r *reconciler) removeDownstreamFinalizer(ctx context.Context, obj *unstruc
 	}
 
 	return obj, nil
-}
-
-func injectBoundAnnotation(obj *unstructured.Unstructured) {
-	ann := obj.GetAnnotations()
-	if ann == nil {
-		ann = make(map[string]string)
-	}
-	ann["kube-bind.io/bound"] = "true"
-
-	obj.SetAnnotations(ann)
 }

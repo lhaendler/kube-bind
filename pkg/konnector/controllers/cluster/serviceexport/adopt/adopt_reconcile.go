@@ -26,6 +26,7 @@ import (
 	"k8s.io/klog/v2"
 
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
+	"github.com/kube-bind/kube-bind/pkg/konnector/adopt"
 )
 
 type reconciler struct {
@@ -76,12 +77,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 			candidate := obj.DeepCopy()
 			candidate.SetResourceVersion("")
 			candidate.SetNamespace(ns)
-			ann := candidate.GetAnnotations()
-			if ann == nil {
-				ann = map[string]string{}
-			}
-			ann["kube-bind.io/bound"] = "true"
-			candidate.SetAnnotations(ann)
+			adopt.InjectBoundAnnotation(candidate)
 
 			_, err := r.createConsumerObject(ctx, candidate)
 			return err
@@ -93,12 +89,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 	logger = logger.WithValues("name", consumerObj.GetName(), "ns", consumerObj.GetNamespace())
 	// Set annotation on downstream object
 	cObj := consumerObj.DeepCopy()
-	ann := cObj.GetAnnotations()
-	if ann == nil {
-		ann = map[string]string{}
-	}
-	ann["kube-bind.io/bound"] = "true"
-	cObj.SetAnnotations(ann)
+	adopt.InjectBoundAnnotation(cObj)
 
 	if !equality.Semantic.DeepEqual(cObj.GetAnnotations(), consumerObj.GetAnnotations()) {
 		logger.Info("adding bind annotation to consumer object", "name", cObj.GetName(), "ns", cObj.GetNamespace())
@@ -106,12 +97,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 	}
 
 	pObj := obj.DeepCopy()
-	ann = pObj.GetAnnotations()
-	if ann == nil {
-		ann = map[string]string{}
-	}
-	ann["kube-bind.io/bound"] = "true"
-	pObj.SetAnnotations(ann)
+	adopt.InjectBoundAnnotation(pObj)
 
 	if !equality.Semantic.DeepEqual(pObj.GetAnnotations(), consumerObj.GetAnnotations()) {
 		logger.Info("adding bind annotation to provider object")

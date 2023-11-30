@@ -26,6 +26,7 @@ import (
 	"k8s.io/klog/v2"
 
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
+	"github.com/kube-bind/kube-bind/pkg/konnector/adopt"
 )
 
 type reconciler struct {
@@ -83,9 +84,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 
 	orig := downstream
 	downstream = downstream.DeepCopy()
-	ann := downstream.GetAnnotations()
-	ann["kube-bind.io/bound"] = "true"
-	downstream.SetAnnotations(ann)
+	adopt.InjectBoundAnnotation(downstream)
 
 	status, found, err := unstructured.NestedFieldNoCopy(obj.Object, "status")
 	if err != nil {
