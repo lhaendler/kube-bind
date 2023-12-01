@@ -26,6 +26,7 @@ import (
 	"k8s.io/klog/v2"
 
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
+	"github.com/kube-bind/kube-bind/pkg/konnector/adopt"
 )
 
 type reconciler struct {
@@ -73,24 +74,22 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		if v, ok := obj.GetAnnotations()["kube-bind.io/bound"]; !ok && v != "true" {
 			logger.Info("adopting object", "name", obj.GetName(), "consumer namespace", ns)
 
-			//TODO does this overwrite important annotations?
 			candidate := obj.DeepCopy()
 			candidate.SetResourceVersion("")
 			candidate.SetNamespace(ns)
-			candidate.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
+			adopt.InjectBoundAnnotation(candidate)
+
 			_, err := r.createConsumerObject(ctx, candidate)
 			return err
+		} else {
+			return nil
 		}
 	}
 
+	logger = logger.WithValues("name", consumerObj.GetName(), "ns", consumerObj.GetNamespace())
 	// Set annotation on downstream object
 	cObj := consumerObj.DeepCopy()
-	ann := cObj.GetAnnotations()
-	if ann == nil {
-		ann = map[string]string{}
-	}
-	ann["kube-bind.io/bound"] = "true"
-	cObj.SetAnnotations(ann)
+	adopt.InjectBoundAnnotation(cObj)
 
 	if !equality.Semantic.DeepEqual(cObj.GetAnnotations(), consumerObj.GetAnnotations()) {
 		logger.Info("adding bind annotation to consumer object", "name", cObj.GetName(), "ns", cObj.GetNamespace())
@@ -98,15 +97,10 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 	}
 
 	pObj := obj.DeepCopy()
-	ann = pObj.GetAnnotations()
-	if ann == nil {
-		ann = map[string]string{}
-	}
-	ann["kube-bind.io/bound"] = "true"
-	pObj.SetAnnotations(ann)
+	adopt.InjectBoundAnnotation(pObj)
 
 	if !equality.Semantic.DeepEqual(pObj.GetAnnotations(), consumerObj.GetAnnotations()) {
-		logger.Info("adding bind annotation to provider object", "name", cObj.GetName(), "ns", cObj.GetNamespace())
+		logger.Info("adding bind annotation to provider object")
 		_, err = r.updateProviderObject(ctx, pObj)
 	}
 

@@ -174,7 +174,7 @@ spec:
 						return false
 					}
 
-					t.Logf("got items: %+v", mangos)
+					t.Logf("got items: n=%d i=%+v", len(mangos.Items), mangos)
 					var item *unstructured.Unstructured
 					for _, i := range mangos.Items {
 						if i.GetName() == "test2" {

@@ -26,6 +26,7 @@ import (
 	"k8s.io/klog/v2"
 
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
+	"github.com/kube-bind/kube-bind/pkg/konnector/adopt"
 )
 
 type reconciler struct {
@@ -55,7 +56,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 			return err // hoping the status is set soon.
 		}
 
-		logger = logger.WithValues("upstreamNamespace", sn.Status.Namespace)
+		logger = logger.WithValues("upstreamNamespace", sn.Status.Namespace, "name", obj.GetName())
 		ctx = klog.NewContext(ctx, logger)
 
 		// continue with downstream namespace
@@ -83,7 +84,8 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 
 	orig := downstream
 	downstream = downstream.DeepCopy()
-	downstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
+	adopt.InjectBoundAnnotation(downstream)
+
 	status, found, err := unstructured.NestedFieldNoCopy(obj.Object, "status")
 	if err != nil {
 		runtime.HandleError(err)
@@ -98,7 +100,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		unstructured.RemoveNestedField(downstream.Object, "status")
 	}
 	if !reflect.DeepEqual(orig, downstream) {
-		logger.Info("Updating downstream object status", "downstreamNamespace", ns, "downstreamName", obj.GetName())
+		logger.Info("Updating downstream object status")
 		if _, err := r.updateConsumerObjectStatus(ctx, downstream); err != nil {
 			return err
 		}

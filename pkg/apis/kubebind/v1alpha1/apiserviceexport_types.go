@@ -52,6 +52,7 @@ const (
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Established",type="string",JSONPath=`.status.conditions[?(@.type=="Established")].status`,priority=5
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=`.metadata.creationTimestamp`,priority=0
+// +kubebuilder:validation:XValidation:rule="self.metadata.name == self.spec.names.plural+\".\"+self.spec.group",message="informerScope is immutable"
 type APIServiceExport struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -75,7 +76,9 @@ func (in *APIServiceExport) SetConditions(conditions conditionsapi.Conditions) {
 
 // APIServiceExportSpec defines the desired state of APIServiceExport.
 //
-// +kubebuilder:validation:XValidation:rule=`self.scope == "Namespaced" || self.informerScope == "Cluster"`,message="informerScope is must be Cluster for cluster-scoped resources"
+// +kubebuilder:validation:XValidation:rule=`self.scope == "Namespaced" || self.informerScope == "Cluster"`,message="informerScope must be Cluster for cluster-scoped resources"
+// +kubebuilder:validation:XValidation:rule=`self.scope == "Namespaced" || has(self.clusterScopedIsolation)`,message="clusterScopedIsolation must be defined for cluster-scoped resources"
+// +kubebuilder:validation:XValidation:rule=`self.scope == "Cluster" || !has(self.clusterScopedIsolation)`,message="clusterScopedIsolation is not relevant for namespaced resources"
 type APIServiceExportSpec struct {
 	APIServiceExportCRDSpec `json:",inline"`
 
@@ -93,7 +96,27 @@ type APIServiceExportSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="informerScope is immutable"
 	InformerScope Scope `json:"informerScope"`
+
+	// ClusterScopedIsolation specifies how cluster scoped service objects are isolated between multiple consumers on the provider side.
+	// It can be "Prefixed", "Namespaced", or "None".
+	ClusterScopedIsolation Isolation `json:"clusterScopedIsolation,omitempty"`
 }
+
+// Isolation is an enum defining the different ways to isolate cluster scoped objects
+//
+// +kubebuilder:validation:Enum=Prefixed;Namespaced;None
+type Isolation string
+
+const (
+	// Prepends the name of the cluster namespace to an object's name.
+	IsolationPrefixed Isolation = "Prefixed"
+
+	// Maps a consumer side object into a namespaced object inside the corresponding cluster namespace.
+	IsolationNamespaced Isolation = "Namespaced"
+
+	// Used for the case of a dedicated provider where isolation is not necessary.
+	IsolationNone Isolation = "None"
+)
 
 type APIServiceExportCRDSpec struct {
 	// group is the API group of the defined custom resource. Empty string means the

@@ -29,6 +29,7 @@ import (
 	"k8s.io/klog/v2"
 
 	kubebindv1alpha1 "github.com/kube-bind/kube-bind/pkg/apis/kubebind/v1alpha1"
+	"github.com/kube-bind/kube-bind/pkg/konnector/adopt"
 )
 
 type reconciler struct {
@@ -111,7 +112,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		upstream.SetFinalizers(nil)
 		unstructured.RemoveNestedField(upstream.Object, "status")
 
-		upstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
+		adopt.InjectBoundAnnotation(upstream)
 
 		logger.Info("Creating upstream object")
 		if _, err := r.createProviderObject(ctx, upstream); err != nil && !errors.IsAlreadyExists(err) {
@@ -154,7 +155,7 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 	}
 	upstreamSpec, _, err := unstructured.NestedFieldNoCopy(upstream.Object, "spec")
 	if err != nil {
-		logger.Error(err, "failed to get downstream spec")
+		logger.Error(err, "failed to get upstream spec")
 		return nil
 	}
 	if reflect.DeepEqual(downstreamSpec, upstreamSpec) {
@@ -176,9 +177,9 @@ func (r *reconciler) reconcile(ctx context.Context, obj *unstructured.Unstructur
 		unstructured.RemoveNestedField(upstream.Object, "spec")
 	}
 
-	logger.Info("Updating update object")
+	logger.Info("Updating upstream object")
 	upstream.SetManagedFields(nil) // server side apply does not want this
-	upstream.SetAnnotations(map[string]string{"kube-bind.io/bound": "true"})
+	adopt.InjectBoundAnnotation(upstream)
 	if _, err := r.updateProviderObject(ctx, upstream); err != nil {
 		return err
 	}
